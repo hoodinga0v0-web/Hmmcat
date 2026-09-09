@@ -59,13 +59,13 @@
     .soundBtn .muteSlash{display:none}.soundBtn.muted .soundWaves{display:none}.soundBtn.muted .muteSlash{display:block}
     .eventCaption{position:fixed;z-index:60;left:50%;bottom:max(16px,env(safe-area-inset-bottom));width:max-content;max-width:calc(100vw - 36px);margin:0;transform:translateX(-50%);color:#fff;font-size:clamp(.9rem,2.8vmin,1rem);font-weight:850;line-height:1.5;text-align:center;text-shadow:0 1px 2px #000,0 0 7px #000;pointer-events:none}
     .eventCaption[hidden]{display:none}.eventCaption span{display:block}.eventUnlock{font-size:.875rem;font-weight:600;opacity:.8}
-    .summon{position:fixed;z-index:20;width:min(59vw,360px);opacity:0;pointer-events:none;filter:drop-shadow(0 12px 10px rgba(0,0,0,.45));--rot:0deg;--start-x:0%;--start-y:0%;--exit-x:0%;--exit-y:0%;--wiggle:5deg;--summon-travel:1;--summon-overshoot:-.035;--summon-entry-scale:.86;--summon-pop-scale:1.07;--summon-exit-scale:.94}
+    .summon{position:fixed;z-index:20;width:min(59vw,360px);opacity:0;pointer-events:none;filter:drop-shadow(0 12px 10px rgba(0,0,0,.45));--rot:0deg;--summon-flip:1;--start-x:0%;--start-y:0%;--exit-x:0%;--exit-y:0%;--wiggle:5deg;--summon-travel:1;--summon-overshoot:-.035;--summon-entry-scale:.86;--summon-pop-scale:1.07;--summon-exit-scale:.94}
     .summon.pos-br{right:-38px;bottom:-42px;--rot:-3deg;--start-x:75%;--start-y:95%;--exit-x:70%;--exit-y:90%;--wiggle:-5deg}
     .summon.pos-bl{left:-38px;bottom:-42px;--rot:3deg;--start-x:-75%;--start-y:95%;--exit-x:-70%;--exit-y:90%;--wiggle:5deg}
     .summon.pos-tr{right:-42px;top:-38px;--rot:-92deg;--start-x:95%;--start-y:-75%;--exit-x:90%;--exit-y:-70%;--wiggle:-5deg}
     .summon.pos-tl{left:-42px;top:-38px;--rot:92deg;--start-x:-95%;--start-y:-75%;--exit-x:-90%;--exit-y:-70%;--wiggle:5deg}
     .summon.show{animation:summonPop 2.15s cubic-bezier(.18,.82,.24,1) both}
-    @keyframes summonPop{0%{opacity:0;transform:translate(calc(var(--start-x) * var(--summon-travel)),calc(var(--start-y) * var(--summon-travel))) rotate(calc(var(--rot) + var(--wiggle))) scale(var(--summon-entry-scale))}18%{opacity:1;transform:translate(calc(var(--start-x) * var(--summon-overshoot)),calc(var(--start-y) * var(--summon-overshoot))) rotate(calc(var(--rot) - var(--wiggle))) scale(var(--summon-pop-scale))}30%,78%{opacity:1;transform:translate(0,0) rotate(var(--rot)) scale(1)}100%{opacity:0;transform:translate(calc(var(--exit-x) * var(--summon-travel)),calc(var(--exit-y) * var(--summon-travel))) rotate(var(--rot)) scale(var(--summon-exit-scale))}}
+    @keyframes summonPop{0%{opacity:0;transform:translate(calc(var(--start-x) * var(--summon-travel)),calc(var(--start-y) * var(--summon-travel))) rotate(calc(var(--rot) + var(--wiggle))) scale(var(--summon-entry-scale)) scaleX(var(--summon-flip))}18%{opacity:1;transform:translate(calc(var(--start-x) * var(--summon-overshoot)),calc(var(--start-y) * var(--summon-overshoot))) rotate(calc(var(--rot) - var(--wiggle))) scale(var(--summon-pop-scale)) scaleX(var(--summon-flip))}30%,78%{opacity:1;transform:translate(0,0) rotate(var(--rot)) scale(1) scaleX(var(--summon-flip))}100%{opacity:0;transform:translate(calc(var(--exit-x) * var(--summon-travel)),calc(var(--exit-y) * var(--summon-travel))) rotate(var(--rot)) scale(var(--summon-exit-scale)) scaleX(var(--summon-flip))}}
     .summonNote{position:fixed;z-index:21;color:#fff;font-size:clamp(1rem,4.2vw,1.25rem);font-weight:950;text-shadow:0 1px 2px #000,0 0 7px #000;opacity:0;pointer-events:none}
     .summonNote.pos-br{right:15px;bottom:clamp(180px,49vw,285px)}.summonNote.pos-bl{left:15px;bottom:clamp(180px,49vw,285px)}
     .summonNote.pos-tr{right:15px;top:clamp(98px,38vw,238px)}.summonNote.pos-tl{left:15px;top:clamp(98px,38vw,238px)}
@@ -110,6 +110,7 @@
       .milestoneLayer.show{animation:none!important;opacity:1}.imageStage.ascension .earOverlay{animation:none!important;opacity:1}.imageStage.ascension .ascensionLight{animation:none!important;opacity:.2}.ripple,.thoughtMark{display:none}
     }
     .ideaHandGlyph{display:block;transform:scaleX(-1)}
+    .summon.pos-bl,.summon.pos-tl{--summon-flip:-1}
     .accessory.extra-prop{right:5%;top:73%;max-width:24%;font-size:clamp(36px,10vmin,84px);transform:rotate(9deg)}
     .accessory.extra-prop[data-accessory="lamp"]{top:43%;right:3%}
     .accessory.extra-prop[data-accessory="mug"]{top:83%;right:5%}
