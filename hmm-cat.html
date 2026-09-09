@@ -625,7 +625,7 @@
       let count=Math.max(0,Number(localStorage.getItem('hmm-cat-count'))||0),sound=localStorage.getItem('hmm-cat-sound')!=='off',lang=localStorage.getItem('hmm-cat-lang')||'ko';
       let historyStats=loadHistory(),accessoryState=loadAccessories(),held=false,summoning=false,milestoneActive=false,holdTimer,animTimer,milestoneTimer,tapTimes=[],lastSummonPosition=-1;
       let dialogueTimer,activeDialogue=null,lastDialogue=-1,currentMilestone=null;
-      let sessionTaps=0,ascending=false,finaleCatsTimer,summonTimer,summonEpoch=0,grandClones=[],grandNotes=[],lastSummonDialogue=null,ceremonyContext=null;
+      let sessionTaps=0,ascending=false,finaleCatsTimer,summonTimer,summonEpoch=0,grandClones=[],grandNotes=[],lastSummonDialogue=null;
       if(!copy[lang])lang='ko';
       language.value=lang;document.documentElement.lang=lang;
       const t=()=>copy[lang];
@@ -711,28 +711,130 @@
       }
 
       function updateCps(now=performance.now()){tapTimes=tapTimes.filter(time=>now-time<=1000);cpsEl.textContent=`CPS ${tapTimes.length.toFixed(1)}`;if(tapTimes.length>historyStats.bestCps){historyStats.bestCps=tapTimes.length;saveHistory()}}
-      function synthHum(long=false){try{const C=window.AudioContext||window.webkitAudioContext,c=new C(),o=c.createOscillator(),g=c.createGain(),now=c.currentTime;o.type='triangle';o.frequency.setValueAtTime(long?142:166,now);o.frequency.exponentialRampToValueAtTime(long?119:145,now+(long?.58:.38));g.gain.setValueAtTime(.0001,now);g.gain.exponentialRampToValueAtTime(.065,now+.025);g.gain.exponentialRampToValueAtTime(.0001,now+(long?.65:.45));o.connect(g).connect(c.destination);o.start(now);o.stop(now+(long?.68:.48))}catch(e){}}
+      const voiceAudios=[hmmAudio,hmmLongAudio,ahaAudio],soundAudios=[...voiceAudios,meowAudio];
+      const clipStates=new Map(soundAudios.map(audio=>[audio,{version:0,timer:0,source:null,gain:null}]));
+      const decodedClips=new Map(),ceremonyNodes=new Map();
+      let soundContext=null,audioEpoch=0,audioNeedsReload=true,audioAway=document.hidden;
+      const canPlaySound=()=>sound&&!document.hidden&&!audioAway;
+
+      function getSoundContext(){
+        try{
+          if(!soundContext||soundContext.state==='closed'){
+            const C=window.AudioContext||window.webkitAudioContext;if(!C)return null;
+            soundContext=new C();
+            // Unlock the reusable context inside the user's input event.
+            const unlock=soundContext.createBufferSource();unlock.buffer=soundContext.createBuffer(1,1,22050);
+            unlock.connect(soundContext.destination);unlock.onended=()=>unlock.disconnect();unlock.start();
+          }
+          if(soundContext.state!=='running')soundContext.resume().catch(()=>{});
+          return soundContext;
+        }catch(e){return null}
+      }
+      function stopClip(audio){
+        const state=clipStates.get(audio);state.version++;clearTimeout(state.timer);
+        if(state.source){try{state.source.stop()}catch(e){}state.source.disconnect();state.gain.disconnect();state.source=null;state.gain=null}
+        try{audio.pause();audio.currentTime=0}catch(e){}
+      }
+      function stopVoice(except){voiceAudios.forEach(audio=>{if(audio!==except)stopClip(audio)})}
+      function stopCeremonySound(){
+        ceremonyNodes.forEach((gain,node)=>{try{node.stop()}catch(e){}node.disconnect();gain.disconnect()});ceremonyNodes.clear();
+      }
+      function stopAllAudio(){soundAudios.forEach(stopClip);stopCeremonySound()}
+      function prepareAudioOnGesture(){
+        if(!sound||document.hidden)return;audioAway=false;
+        if(audioNeedsReload){
+          audioNeedsReload=false;
+          soundAudios.forEach(audio=>{stopClip(audio);try{audio.load()}catch(e){}});
+        }
+        getSoundContext();
+      }
+      function loseAudioFocus(){
+        audioAway=true;audioNeedsReload=true;audioEpoch++;clearTimeout(holdTimer);held=true;stopAllAudio();
+        if(soundContext&&soundContext.state!=='closed')soundContext.suspend().catch(()=>{});
+      }
+      function restoreAudioFocus(){audioAway=document.hidden;audioNeedsReload=true}
+      document.addEventListener('visibilitychange',()=>document.hidden?loseAudioFocus():restoreAudioFocus());
+      document.addEventListener('freeze',loseAudioFocus);
+      document.addEventListener('resume',restoreAudioFocus);
+      window.addEventListener('pagehide',loseAudioFocus);
+      window.addEventListener('pageshow',restoreAudioFocus);
+      window.addEventListener('blur',loseAudioFocus);
+      window.addEventListener('focus',restoreAudioFocus);
+      document.addEventListener('pointerdown',prepareAudioOnGesture,{capture:true,passive:true});
+      document.addEventListener('keydown',event=>{if(!event.repeat&&(event.key==='Enter'||event.key===' '))prepareAudioOnGesture()},{capture:true});
+      if(navigator.audioSession?.addEventListener)navigator.audioSession.addEventListener('statechange',()=>{
+        if(navigator.audioSession.state==='interrupted')loseAudioFocus();else if(audioAway)restoreAudioFocus();
+      });
+
+      function decodeClip(audio,context){
+        if(!decodedClips.has(audio)){
+          const binary=atob(audio.src.slice(audio.src.indexOf(',')+1)),bytes=new Uint8Array(binary.length);
+          for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);
+          const promise=context.decodeAudioData(bytes.buffer).catch(error=>{decodedClips.delete(audio);throw error});
+          decodedClips.set(audio,promise);
+        }
+        return decodedClips.get(audio);
+      }
+      async function playBufferedClip(audio,volume,rate,wanted){
+        try{
+          const context=getSoundContext();if(!context||!wanted())return;
+          const buffer=await decodeClip(audio,context);
+          if(!wanted())return;
+          if(context.state!=='running')await context.resume();
+          if(!wanted()||context.state!=='running')return;
+          audio.pause();
+          const state=clipStates.get(audio),source=context.createBufferSource(),gain=context.createGain();
+          source.buffer=buffer;source.playbackRate.value=rate;gain.gain.value=volume;source.connect(gain).connect(context.destination);
+          state.source=source;state.gain=gain;
+          source.onended=()=>{source.disconnect();gain.disconnect();if(state.source===source){state.source=null;state.gain=null}};
+          source.start();
+        }catch(e){/* The next user gesture can retry a still-interrupted audio session. */}
+      }
+      function playClip(audio,volume,rate=1,voice=true){
+        if(!canPlaySound())return;if(voice)stopVoice(audio);stopClip(audio);
+        const state=clipStates.get(audio),version=state.version,epoch=audioEpoch;
+        const wanted=()=>canPlaySound()&&state.version===version&&audioEpoch===epoch;
+        let attempt=0;
+        function start(retried){
+          if(!wanted())return;const current=++attempt;clearTimeout(state.timer);
+          const recover=()=>{
+            if(!wanted()||current!==attempt)return;clearTimeout(state.timer);
+            if(!retried){try{audio.load()}catch(e){}start(true)}
+            else{attempt++;playBufferedClip(audio,volume,rate,wanted)}
+          };
+          try{
+            audio.volume=volume;audio.playbackRate=rate;audio.muted=false;
+            // A stale output may leave play() pending without an error after resuming.
+            state.timer=setTimeout(()=>{if(!audio.ended&&(audio.paused||audio.currentTime<=.01))recover()},600);
+            const playing=audio.play();if(playing?.catch)playing.catch(recover);
+          }catch(e){recover()}
+        }
+        start(false);
+      }
+      function playHmm(){playClip(hmmAudio,.76,.98+Math.random()*.025)}
+      function playLongHmm(){playClip(hmmLongAudio,.82)}
+      function playIdea(){playClip(ahaAudio,.92)}
+      function playMeow(){playClip(meowAudio,.78,1,false)}
+
+      function connectCeremonyTone(oscillator,gain,context){
+        oscillator.connect(gain).connect(context.destination);ceremonyNodes.set(oscillator,gain);
+        oscillator.onended=()=>{oscillator.disconnect();gain.disconnect();ceremonyNodes.delete(oscillator)};
+      }
       function playMilestoneChime(event={}){
-        if(!sound)return;stopCeremonySound();
+        if(!canPlaySound())return;stopCeremonySound();
         const patterns={loading:[294,262,196],cap:[392,523.25,659.25,784],honor:[392,523.25,659.25,784],diploma:[523.25,659.25,784],mystery:[311.13,392,349.23],signal:[330,440,330,523.25],listen:[659.25,783.99],laurel:[392,493.88,587.33,784],rank:[392,523.25]};
-        try{const C=window.AudioContext||window.webkitAudioContext,c=new C();ceremonyContext=c;const now=c.currentTime;const notes=patterns[event.scene]||[392,523.25];
-          notes.forEach((frequency,i)=>{const o=c.createOscillator(),g=c.createGain(),start=now+i*.14;o.type='triangle';o.frequency.value=frequency;g.gain.setValueAtTime(.0001,start);g.gain.exponentialRampToValueAtTime(.035,start+.02);g.gain.exponentialRampToValueAtTime(.0001,start+.3);o.connect(g).connect(c.destination);o.start(start);o.stop(start+.32)});
+        try{const c=getSoundContext();if(!c)return;const now=c.currentTime,notes=patterns[event.scene]||[392,523.25];
+          notes.forEach((frequency,i)=>{const o=c.createOscillator(),g=c.createGain(),start=now+i*.14;o.type='triangle';o.frequency.value=frequency;g.gain.setValueAtTime(.0001,start);g.gain.exponentialRampToValueAtTime(.035,start+.02);g.gain.exponentialRampToValueAtTime(.0001,start+.3);connectCeremonyTone(o,g,c);o.start(start);o.stop(start+.32)});
         }catch(e){}
       }
-      function stopCeremonySound(){if(ceremonyContext){ceremonyContext.close().catch(()=>{});ceremonyContext=null}}
       function playAscensionSound(){
-        if(!sound)return;stopCeremonySound();
-        try{const C=window.AudioContext||window.webkitAudioContext,c=new C();ceremonyContext=c;const now=c.currentTime;
-          [261.63,329.63,392,523.25].forEach((frequency,i)=>{const o=c.createOscillator(),g=c.createGain(),start=now+i*.22;o.type='sine';o.frequency.value=frequency;g.gain.setValueAtTime(.0001,start);g.gain.exponentialRampToValueAtTime(.029,start+1.1);g.gain.exponentialRampToValueAtTime(.0001,now+7.4);o.connect(g).connect(c.destination);o.start(start);o.stop(now+7.5)});
-          [783.99,1046.5,1318.51].forEach((frequency,i)=>{const o=c.createOscillator(),g=c.createGain(),start=now+.9+i*.62;o.type='triangle';o.frequency.value=frequency;g.gain.setValueAtTime(.0001,start);g.gain.exponentialRampToValueAtTime(.023,start+.018);g.gain.exponentialRampToValueAtTime(.0001,start+2.6);o.connect(g).connect(c.destination);o.start(start);o.stop(start+2.7)});
+        if(!canPlaySound())return;stopCeremonySound();
+        try{const c=getSoundContext();if(!c)return;const now=c.currentTime;
+          [261.63,329.63,392,523.25].forEach((frequency,i)=>{const o=c.createOscillator(),g=c.createGain(),start=now+i*.22;o.type='sine';o.frequency.value=frequency;g.gain.setValueAtTime(.0001,start);g.gain.exponentialRampToValueAtTime(.029,start+1.1);g.gain.exponentialRampToValueAtTime(.0001,now+7.4);connectCeremonyTone(o,g,c);o.start(start);o.stop(now+7.5)});
+          [783.99,1046.5,1318.51].forEach((frequency,i)=>{const o=c.createOscillator(),g=c.createGain(),start=now+.9+i*.62;o.type='triangle';o.frequency.value=frequency;g.gain.setValueAtTime(.0001,start);g.gain.exponentialRampToValueAtTime(.023,start+.018);g.gain.exponentialRampToValueAtTime(.0001,start+2.6);connectCeremonyTone(o,g,c);o.start(start);o.stop(start+2.7)});
         }catch(e){}
       }
-      const voiceAudios=[hmmAudio,hmmLongAudio,ahaAudio];
-      function stopVoice(except){voiceAudios.forEach(a=>{if(a!==except){a.pause();a.currentTime=0}})}
-      function playHmm(){if(!sound)return;stopVoice(hmmAudio);hmmAudio.pause();hmmAudio.currentTime=0;hmmAudio.volume=.76;hmmAudio.playbackRate=.98+Math.random()*.025;hmmAudio.play().catch(()=>synthHum(false))}
-      function playLongHmm(){if(!sound)return;stopVoice(hmmLongAudio);hmmLongAudio.pause();hmmLongAudio.currentTime=0;hmmLongAudio.volume=.82;hmmLongAudio.playbackRate=1;hmmLongAudio.play().catch(()=>synthHum(true))}
-      function playIdea(){if(!sound)return;stopVoice(ahaAudio);ahaAudio.pause();ahaAudio.currentTime=0;ahaAudio.volume=.92;ahaAudio.playbackRate=1;ahaAudio.play().catch(()=>{})}
-      function playMeow(){if(!sound)return;meowAudio.pause();meowAudio.currentTime=0;meowAudio.volume=.78;meowAudio.playbackRate=1;meowAudio.play().catch(()=>{})}
+
       function ripple(x,y){const r=document.createElement('i');r.className='ripple';r.style.left=x+'px';r.style.top=y+'px';document.body.append(r);r.addEventListener('animationend',()=>r.remove())}
       function thoughtMark(x,y,long=false){if(count%3!==0&&!long)return;const m=document.createElement('i');m.className='thoughtMark';m.textContent=long?'…':'?';m.style.left=(x+(Math.random()-.5)*28)+'px';m.style.top=(y-9)+'px';document.body.append(m);m.addEventListener('animationend',()=>m.remove())}
       function positionDialogue(){
@@ -842,7 +944,7 @@
 
       surface.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'&&e.button!==0)return;e.preventDefault();if(milestoneActive){held=true;return}held=false;skipOrdinaryDialogue();try{surface.setPointerCapture(e.pointerId)}catch(err){}const x=e.clientX,y=e.clientY;clearTimeout(holdTimer);holdTimer=setTimeout(()=>{held=true;react(x,y,true)},520)},{passive:false});
       surface.addEventListener('pointerup',e=>{e.preventDefault();clearTimeout(holdTimer);if(milestoneActive){held=true;return}if(!held)react(e.clientX,e.clientY,false)},{passive:false});
-      surface.addEventListener('pointercancel',()=>clearTimeout(holdTimer));
+      surface.addEventListener('pointercancel',()=>{clearTimeout(holdTimer);held=true});
       surface.addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&!e.repeat){e.preventDefault();if(!milestoneActive)react(innerWidth/2,innerHeight/2,false)}});
       document.addEventListener('contextmenu',e=>{if(!e.target.closest('select,option'))e.preventDefault()},{capture:true});
       document.addEventListener('dragstart',e=>e.preventDefault(),{capture:true});
@@ -851,8 +953,8 @@
       closetBtn.addEventListener('click',openCloset);closetCloseBtn.addEventListener('click',()=>closeOverlay(closetOverlay,closetBtn));closetOverlay.addEventListener('click',e=>{if(e.target===closetOverlay)closeOverlay(closetOverlay,closetBtn)});
       closetList.addEventListener('click',e=>{const button=e.target.closest('.accessoryOption');if(!button||button.disabled)return;setAccessory(button.dataset.id,button.getAttribute('aria-pressed')!=='true')});
       document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(statsOverlay.classList.contains('open'))closeOverlay(statsOverlay,statsBtn);if(closetOverlay.classList.contains('open'))closeOverlay(closetOverlay,closetBtn)});
-      soundBtn.addEventListener('click',()=>{sound=!sound;localStorage.setItem('hmm-cat-sound',sound?'on':'off');if(!sound){stopVoice();stopCeremonySound();meowAudio.pause();meowAudio.currentTime=0}render();showToast(sound?t().soundOn:t().soundOff)});
-      resetBtn.addEventListener('click',()=>{if(!confirm(t().resetAsk))return;clearTimeout(holdTimer);clearTimeout(animTimer);clearSummons();finishMilestone();stopVoice();meowAudio.pause();meowAudio.currentTime=0;stage.classList.remove('thinking','aha','deep');clearDialogue();lastDialogue=-1;lastSummonDialogue=null;held=true;sessionTaps=0;count=0;historyStats=emptyHistory();accessoryState=emptyAccessories();saveHistory();saveAccessories();tapTimes=[];updateCps();localStorage.setItem('hmm-cat-count','0');render();showToast(t().resetDone)});
+      soundBtn.addEventListener('click',()=>{sound=!sound;localStorage.setItem('hmm-cat-sound',sound?'on':'off');if(sound)prepareAudioOnGesture();else stopAllAudio();render();showToast(sound?t().soundOn:t().soundOff)});
+      resetBtn.addEventListener('click',()=>{if(!confirm(t().resetAsk))return;clearTimeout(holdTimer);clearTimeout(animTimer);clearSummons();finishMilestone();stopAllAudio();stage.classList.remove('thinking','aha','deep');clearDialogue();lastDialogue=-1;lastSummonDialogue=null;held=true;sessionTaps=0;count=0;historyStats=emptyHistory();accessoryState=emptyAccessories();saveHistory();saveAccessories();tapTimes=[];updateCps();localStorage.setItem('hmm-cat-count','0');render();showToast(t().resetDone)});
       language.addEventListener('change',()=>{lang=language.value;localStorage.setItem('hmm-cat-lang',lang);document.documentElement.lang=lang;render()});
       setInterval(()=>updateCps(),100);render();
     })();
